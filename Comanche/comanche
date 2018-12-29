@@ -1,0 +1,312 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use Socket;
+use Cwd;
+use IO::Handle;
+
+# Chemin du fichier d'erreur
+my $pathErreur;
+
+# Parametre de comanche
+my $commande=$ARGV[0];
+
+# Liste des pid des fils
+my @fils = ();
+
+# Compteurs
+my $reqrecues = 0;
+my $reqtraitees = 0;
+
+# Verification des arguments
+if(@ARGV==0) { die "Parametre insuffisant\n" };
+if($commande eq "start"){
+	start();
+} elsif($commande eq "stop"){
+	stop();
+} elsif($commande eq "status"){
+	status();
+}else {
+	die "Parametre incorrect\n";
+}
+	
+# Gestion des erreurs
+sub error {
+	my $statut = $_[0];
+	my $message;
+	if ( $statut eq "400") { $message = "Bad Request" ;}
+	if ( $statut eq "403") { $message = "Forbidden"; }	
+	if ( $statut eq "404") { $message = "Not Found"; }	
+	if ( $statut eq "405") { $message = "Method Not Allowed";	}
+	if ( $statut eq "415") { $message = "Unsupported Media Type";	}
+	if ( $statut eq "503") { $message = "Service Unavailable"; }
+	if ( $statut eq "505") { $message = "HTTP Version Not Supported"; }	
+	print "HTTP/1.1 ".$statut." ".$message;
+	print "Content-Type : text/html\r\n";
+	print "\r\n";
+	print `cat $pathErreur`;
+}
+
+# Bonne requête.
+sub requestOK {
+     print "HTTP/1.1 200 OK\r\n";
+     print "Content-Type: ".$_[0]."\r\n";
+     print "\r\n";
+}
+my %conftab;
+# Verification du fichier de configuation
+sub configuration {
+	my $config = "comanche.conf";
+	
+
+	# Ouvre le fichier de configuration
+	open(CONF , "<$config") || die "Echec open $config : $!";
+
+	while(<CONF>){
+		# Verifie que la ligne n'est pas un commentaire
+		next if(/^\s*(#.*)?$/);
+		# Vérifie le les variables et les valeurs associés  
+		if(/^set\s+(.+)\s+(.+)/){
+			my @val = split(" ",$_);
+			my $variable = $val[1];
+			my $valeur = $val[2];
+			if($variable=~ /port/){
+				if($valeur =~ /\D+/ ){
+					die "CONFIGURATION : Le port n'est pas un entier\n";
+				}
+			} elsif($variable =~ /clients/){
+				if($valeur =~ /\D+/){
+					die "CONFIGURATION : Le client n'est pas un entier\n";
+				}
+			} elsif($variable =~ /index/){
+				if(!-f $valeur || !-e $valeur){
+					die "CONFIGURATION : Le fichier index indiqué n'est pas un fichier ou n'existe pas\n";
+				}
+			} elsif($variable =~ /error/){
+				if(!-e $valeur){
+					die "CONFIGURATION : Le fichier error indiqué n'existe pas\n";
+				}
+				else{
+					$pathErreur = $valeur;
+				}
+			}
+			$conftab{"general"}{$variable} = $valeur;
+		# Ajout des routes
+		} elsif (/^route\s+(.+?)\s+to\s+(.+)/){
+			$conftab{"route"}{$1} = $2;
+		} elsif (/^exec\s+(.+?)\s+from\s+(.+)/){
+			$conftab{"exec"}{$1}=$2;
+		} else {
+			die "Erreur de configuration\n";
+		}
+	}
+	close(CONF);
+}
+
+# Permet d'afficher les documents, les formats acceptes sont .txt, .html, .png.
+sub affiche {
+	my $path = $_[0];
+	my @paths = split("/",$path);
+	my $file = $paths[@paths-1];
+	if( $file =~ /.html$/){
+		requestOK("text/html");
+	  	print `cat $path`;
+	}
+	# Envoie le contenu du fichier text en format html.
+	elsif( $file =~ /.txt$/){
+		requestOK("text/html");
+		print "<!doctype html><html><head><meta charset=\"utf-8\"><title>$file</title></head><body><p>";
+		print `cat $path`;
+		print "</p></body></html>";
+	}
+	elsif ($file =~ /.png$/){
+		open(FILE,$path);
+		requestOK("image/png");
+		while(<FILE>){
+			print CLIENT;
+		}
+		close(FILE);
+	}
+	
+	else{
+		requestOK("text/html");
+		print "<!doctype html><html><head><meta charset=\"utf-8\"><title>$file</title></head><body><p>";
+		print `cat $path`;
+		print "</p></body></html>";
+	}
+}
+
+# Arrête le serveur
+sub stop
+{
+    my $started = 0;
+  
+    while (wait != -1) {}
+}
+
+# Affiche le contenu du fichier
+sub afficheDirectory {
+	my $chemin = "$_[0]";
+	requestOK("text/html");
+
+	my $dir = getcwd();
+
+	# recupération des élément du dossier
+    my $liste = `ls $dir$_[0]`;
+	my @contenu = split("\n",$liste);
+
+	print "<ul>";
+	for (my $i = 0; $i <= @contenu - 1 ; $i++) {
+		my $value = "";
+		if ( ! -d $contenu[$i]){
+		  $chemin = $_[0]."/";
+		}
+		# dossier du lancement du serveur
+		if ( $_[0]  eq "/"){
+	      $value = $contenu[$i].">".$contenu[$i];
+		}
+		# autre dossier
+		else{
+		  $value = $chemin.$contenu[$i].">".$contenu[$i];
+		}
+		print  "<li><a href=$value</a></li>";
+    }
+	print "</ul>";
+}
+
+#Affiche status du serveur
+sub status
+{
+    $| = 1;
+    print "PID du processus principal : $$\n";
+    print "Nombre de requêtes :\n";
+	print "\treçues : $reqrecues\n";
+    print "\ttraitées : $reqtraitees\n";
+    print "Nombre d'ouvriers actifs : ".@fils."\n"; 
+    close CLIENT;
+}
+
+sub start {
+	# Teste des configurations
+	configuration();
+	# Création de la socket.
+	socket(SERVEUR, PF_INET, SOCK_STREAM, getprotobyname("tcp")) or die("Création impossible $!\n");
+	setsockopt(SERVEUR, SOL_SOCKET, SO_REUSEADDR, 1);
+	my $adresse_complete = sockaddr_in(8080, INADDR_ANY) or die("sockaddr $!\n");
+
+	# On attache une adresse au serveur.
+	bind(SERVEUR, $adresse_complete) or die("bind: $!\n");
+	setsockopt (SERVEUR,SOL_SOCKET, SO_REUSEADDR, 1);
+
+	# Le serveur écoute les requêtes.
+	listen(SERVEUR, 10) or die("listen $!\n");
+	print "<Serveur> Le serveur est démarré.\n";
+
+	my @tab;
+	while (1) {
+
+	        # Le serveur accepte les clients. 
+			accept(CLIENT, SERVEUR) or die("accept $!\n");
+			$reqrecues += 1;
+			
+			# Verification du nombre de client
+			if (scalar @fils >= $conftab{"general"}{"clients"}) {
+				error("503");
+
+			} else {
+
+			$reqtraitees += 1;
+
+		    if(fork() ==0){
+			    select(CLIENT);
+				# autoflush
+			    $| = 1;
+			    while(<CLIENT>)
+			    {
+		            print STDOUT "<Client> $_";
+		            push @tab,$_;
+				  # La derniere ligne est vide.
+		          if ( $_ eq "\r\n"){
+		               if( $tab[0] =~ /GET \/*/){
+						   my @t = split(/\s/,$tab[0]);
+						   my $path = $t[1];
+						   my @taba = split("/",$t[2]);
+						   my $requete = $taba[0];
+						   my $version = $taba[1];
+						   if ( $requete =~ "HTTP"){
+							  if( $version =~ "1.1"){
+								  # Récupération du chemin courant.
+		                          my $dir = getcwd();
+							 	  my $pathComplet=$dir.$path;
+								   if(-e $pathComplet){
+							 		  # Le document existe.
+									   if ( -r $pathComplet){
+										# Si on possede les droits
+										 if ( -d $pathComplet) {
+											 afficheDirectory($path);
+										 }
+										 else{
+		                                   affiche($pathComplet);
+										 }
+									   }
+									   else{
+										   error("403");
+									   }
+		                           }
+		                           else{
+		                            error("404");
+		                           }
+							  }
+							  else{
+								  error("505");
+							  }
+						   }
+						   else{
+							   error("400");
+						   }
+		               }
+		               else{
+								error("400");
+		               }
+					   @tab=();
+		               close(CLIENT);
+		              last;
+		          }
+			    }
+		   }
+			else{
+				 close(CLIENT);
+				 select(STDOUT);
+			}
+		}
+	}
+}
+
+# Evenement consigne dans fichier log
+sub log{
+	
+	my ($event) = @_;
+	if( $event eq "start" or $event eq "stop" ) {
+		
+		# Si lancement ou fermeture du serveur
+		#my $date = time;
+		#my $type = $event;
+		#my $machine = "local";
+		#my $requete = $conftab{"general"}{"port"};
+		#my $projection = "";
+		#my $reponse = "";
+	} else {
+	    #my $date = time;
+	    #my $machine = shift;
+	    #my $type = shift;
+	    #my $requete = shift;
+	    #my $projection = shift;
+	    #my $reponse = shift;
+	}
+	
+	# Ecriture dans le log
+	#my $line = $date.";".$type.";".$machine.";".$requete.";".$projection.";".$reponse."\n";
+	open(LOG, ">>", "/".$conftab{"general"}{"logfile"});
+	#print LOG $line;
+	close( LOG );
+}
