@@ -78,11 +78,14 @@ sub configuration {
 				if($valeur =~ /\D+/){
 					die "CONFIGURATION : Le client n'est pas un entier\n";
 				}
-			} elsif($variable =~ /index/){
-				if(!-f $valeur || !-e $valeur){
-					die "CONFIGURATION : Le fichier index indiqué n'est pas un fichier ou n'existe pas\n";
-				}
-			} elsif($variable =~ /error/){
+			} 
+			# On ne verifie plus s'il a index.html, si il en a pas on affichera par defaut le contenu du directory.
+			#elsif($variable =~ /index/){
+				#if(!-f $valeur || !-e $valeur){
+				#	die "CONFIGURATION : Le fichier index indiqué n'est pas un fichier ou n'existe pas\n";
+				#}
+			#} 
+			elsif($variable =~ /error/){
 				if(!-e $valeur){
 					die "CONFIGURATION : Le fichier error indiqué n'existe pas\n";
 				}
@@ -150,13 +153,17 @@ sub afficheDirectory {
 	requestOK("text/html");
 
 	my $dir = getcwd();
-
+	my $valeurPrint = "<ul>";
+	my $exist = "f";
+ 
 	# recupération des élément du dossier
     my $liste = `ls $dir$_[0]`;
 	my @contenu = split("\n",$liste);
 
-	print "<ul>";
 	for (my $i = 0; $i <= @contenu - 1 ; $i++) {
+		if( $contenu[$i] =~ "index.html"){
+			$exist = "t";
+		}
 		my $value = "";
 		if ( ! -d $contenu[$i]){
 		  $chemin = $_[0]."/";
@@ -169,9 +176,19 @@ sub afficheDirectory {
 		else{
 		  $value = $chemin.$contenu[$i].">".$contenu[$i];
 		}
-		print  "<li><a href=$value</a></li>";
+		$valeurPrint = $valeurPrint."<li><a href=$value</a></li>";
     }
-	print "</ul>";
+	$valeurPrint = $valeurPrint."</ul>";
+	if( $exist eq "t") {
+		 my $pathIndex = "index.html";
+		if ( $_[0] ne "/"){
+			$pathIndex = $dir.$chemin."index.html";
+		}
+		print `cat $pathIndex`;
+	}
+	else {
+	 print $valeurPrint;
+	}
 }
 
 #Affiche status du serveur
