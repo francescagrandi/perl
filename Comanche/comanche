@@ -9,7 +9,7 @@ use IO::Handle;
 my $pathErreur;
 
 # Parametre de comanche
-my $commande=$ARGV[0];
+my $commande = $ARGV[0];
 
 # Liste des pid des fils
 my @fils = ();
@@ -19,7 +19,7 @@ my $reqrecues = 0;
 my $reqtraitees = 0;
 
 # Verification des arguments
-if(@ARGV==0) { die "Parametre insuffisant\n" };
+if(@ARGV == 0) { die "Parametre insuffisant\n" };
 if($commande eq "start"){
 	start();
 } elsif($commande eq "stop"){
@@ -130,7 +130,10 @@ sub affiche {
 		}
 		close(FILE);
 	}
-	
+	elsif( $file =~ /.pl$/){
+		requestOK("text/html");
+		print `perl $path`;
+	}
 	else{
 		requestOK("text/html");
 		print "<!doctype html><html><head><meta charset=\"utf-8\"><title>$file</title></head><body><p>";
@@ -143,14 +146,17 @@ sub affiche {
 sub stop
 {
     my $started = 0;
-  
+	my $pidPapa = `ps -X  | grep  "perl comanche start" | head -n 1 | cut -d ' ' -f3`;
+    `kill -9 $pidPapa`;
     while (wait != -1) {}
 }
+
+# Enleve un element d'un tableau 
 sub supprimerElementTab {
 	my @board = $_[0];
 	my $value = $_[0];
 	my @tmp = ();
-    for ( my $i=0 ; $i<@board ; $i++){
+    for ( my $i = 0 ; $i<@board ; $i++){
 		if($value ne $board[$i]){
 			push @tmp, $board[$i];
 		}
@@ -158,6 +164,7 @@ sub supprimerElementTab {
 	@board = @tmp;
 	return @board;
 }
+
 # Affiche le contenu du fichier
 sub afficheDirectory {
 	my $chemin = "$_[0]";
@@ -244,10 +251,13 @@ sub start {
 			} else {
 
 			$reqtraitees += 1;
+
+			# Recupération et ajout de l'id du fils
 			my $pidFils = fork();
 			$SIG{CHLD} = 'IGNORE';
 			push @fils, $pidFils;
-		    if($pidFils ==0){
+
+		    if($pidFils == 0){
 
 			    select(CLIENT);
 				# autoflush
@@ -299,7 +309,6 @@ sub start {
 		               else{
 								error("400");
 		               }
-					   @tab=();
 		               close(CLIENT);
 		              last;
 		          }
